@@ -1,0 +1,6 @@
+{
+  "name": "Mistral Chatbot",
+  "description": "A clean, modern AI chatbot powered by Mistral, featuring chat history, formatting, and dark mode support.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
