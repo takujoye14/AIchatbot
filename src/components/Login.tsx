@@ -241,7 +241,7 @@ export default function Login({ onLogin }: LoginProps) {
             <KeyRound size={28} className="stroke-[2.5]" />
           </div>
           <h2 className="text-2xl font-black uppercase tracking-tight text-black dark:text-white">
-            MISTRAL CHAT SUITE
+            DoxaBot
           </h2>
           <p className="text-xs font-black text-black dark:text-zinc-300 mt-2 max-w-xs mx-auto leading-relaxed">
             {screen === "login" && "Connectez-vous pour démarrer votre session sécurisée d'assistance IA"}

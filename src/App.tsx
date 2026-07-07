@@ -5,424 +5,213 @@ import Login from "./components/Login";
 import { ChatSession, Message, User } from "./types";
 
 export default function App() {
-  // User login state
   const [currentUser, setCurrentUser] = useState<User | null>(() => {
-    try {
-      const saved = localStorage.getItem("mistral_current_user");
-      return saved ? JSON.parse(saved) : null;
-    } catch (e) {
-      return null;
-    }
+    const saved = localStorage.getItem("mistral_current_user");
+    return saved ? JSON.parse(saved) : null;
   });
 
-  // Load session history from localStorage, individualized per user
-  const [sessions, setSessions] = useState<ChatSession[]>(() => {
-    try {
-      const savedUser = localStorage.getItem("mistral_current_user");
-      if (savedUser) {
-        const parsedUser = JSON.parse(savedUser);
-        const userKey = `mistral_chat_sessions_${parsedUser.email.toLowerCase()}`;
-        const saved = localStorage.getItem(userKey);
-        return saved ? JSON.parse(saved) : [];
-      }
-      return [];
-    } catch (e) {
-      console.error("Failed to load sessions from local storage:", e);
-      return [];
-    }
-  });
-
-  // Load active session ID from localStorage, individualized per user
-  const [activeSessionId, setActiveSessionId] = useState<string | null>(() => {
-    try {
-      const savedUser = localStorage.getItem("mistral_current_user");
-      if (savedUser) {
-        const parsedUser = JSON.parse(savedUser);
-        const activeKey = `mistral_active_session_id_${parsedUser.email.toLowerCase()}`;
-        return localStorage.getItem(activeKey) || null;
-      }
-      return null;
-    } catch (e) {
-      return null;
-    }
-  });
-
-  // Load selected model from localStorage
-  const [selectedModelId, setSelectedModelId] = useState<string>(() => {
-    try {
-      const saved = localStorage.getItem("mistral_selected_model_id");
-      return saved || "mistral-small-latest";
-    } catch (e) {
-      return "mistral-small-latest";
-    }
-  });
-
-  // Load dark mode setting, fallback to system preference
-  const [darkMode, setDarkMode] = useState<boolean>(() => {
-    try {
-      const saved = localStorage.getItem("mistral_dark_mode");
-      if (saved !== null) {
-        return saved === "true";
-      }
-      return window.matchMedia("(prefers-color-scheme: dark)").matches;
-    } catch (e) {
-      return false;
-    }
-  });
-
-  // Sidebar toggle state (for mobile drawers)
+  const [sessions, setSessions] = useState<ChatSession[]>([]);
+  const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
+  const [selectedModelId, setSelectedModelId] = useState(() => localStorage.getItem("mistral_selected_model_id") || "mistral-small-latest");
+  const [darkMode, setDarkMode] = useState(() => localStorage.getItem("mistral_dark_mode") === "true");
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
 
-  // Sync sessions to localStorage whenever they change, individualized per user
+  // Charger les sessions de l'utilisateur depuis Supabase
   useEffect(() => {
-    if (!currentUser) return;
-    try {
-      const userKey = `mistral_chat_sessions_${currentUser.email.toLowerCase()}`;
-      localStorage.setItem(userKey, JSON.stringify(sessions));
-    } catch (e) {
-      console.error("Failed to write sessions to local storage:", e);
-    }
-  }, [sessions, currentUser]);
+    if (!currentUser?.id) return;
+    const fetchConvs = async () => {
+      try {
+        const res = await fetch(`/api/conversations?userId=${currentUser.id}`);
+        if (res.ok) {
+          const data = await res.json();
+          const mapped: ChatSession[] = data.map((c: any) => ({
+            id: c.id,
+            title: c.title,
+            messages: [],
+            model: selectedModelId,
+            createdAt: new Date(c.created_at).getTime()
+          }));
+          setSessions(mapped);
+          if (mapped.length > 0) setActiveSessionId(mapped[0].id);
+        }
+      } catch (e) {
+        console.error(e);
+      }
+    };
+    fetchConvs();
+  }, [currentUser]);
 
-  // Sync activeSessionId to localStorage, individualized per user
+  // Charger l'historique des messages de la session active
   useEffect(() => {
-    if (!currentUser) return;
-    const activeKey = `mistral_active_session_id_${currentUser.email.toLowerCase()}`;
-    if (activeSessionId) {
-      localStorage.setItem(activeKey, activeSessionId);
-    } else {
-      localStorage.removeItem(activeKey);
-    }
-  }, [activeSessionId, currentUser]);
+    if (!activeSessionId || !currentUser) return;
+    const fetchMsgs = async () => {
+      try {
+        const res = await fetch(`/api/conversations/${activeSessionId}/messages`);
+        if (res.ok) {
+          const data = await res.json();
+          const mapped: Message[] = data.map((m: any) => ({
+            id: m.id,
+            role: m.role,
+            content: m.content,
+            timestamp: new Date(m.created_at).getTime()
+          }));
+          setSessions(prev => prev.map(s => s.id === activeSessionId ? { ...s, messages: mapped } : s));
+        }
+      } catch (e) {
+        console.error(e);
+      }
+    };
+    fetchMsgs();
+  }, [activeSessionId]);
 
-  // Sync selected model to localStorage
   useEffect(() => {
     localStorage.setItem("mistral_selected_model_id", selectedModelId);
   }, [selectedModelId]);
 
-  // Handle setting/removing HTML "dark" class
   useEffect(() => {
-    try {
-      localStorage.setItem("mistral_dark_mode", String(darkMode));
-      if (darkMode) {
-        document.documentElement.classList.add("dark");
-      } else {
-        document.documentElement.classList.remove("dark");
-      }
-    } catch (e) {
-      console.error("Failed to apply dark mode class:", e);
-    }
+    localStorage.setItem("mistral_dark_mode", String(darkMode));
+    if (darkMode) document.documentElement.classList.add("dark");
+    else document.documentElement.classList.remove("dark");
   }, [darkMode]);
 
-  // Find currently active session
-  const activeSession = sessions.find((s) => s.id === activeSessionId) || null;
-
-  // Create a new session
-  const createNewSession = (): string => {
-    const newId = `session_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-    const newSession: ChatSession = {
-      id: newId,
-      title: "Nouvelle Discussion",
-      messages: [],
-      model: selectedModelId,
-      createdAt: Date.now(),
-    };
-    setSessions((prev) => [newSession, ...prev]);
-    setActiveSessionId(newId);
-    return newId;
-  };
-
-  const handleSelectSession = (id: string) => {
-    setActiveSessionId(id);
-  };
-
-  const handleDeleteSession = (id: string) => {
-    setSessions((prev) => prev.filter((s) => s.id !== id));
-    if (activeSessionId === id) {
-      const remaining = sessions.filter((s) => s.id !== id);
-      setActiveSessionId(remaining.length > 0 ? remaining[0].id : null);
+  const createNewSession = async (): Promise<string> => {
+    if (!currentUser?.id) return "";
+    try {
+      const res = await fetch("/api/conversations", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ userId: currentUser.id, title: "Nouvelle Discussion" })
+      });
+      if (!res.ok) return "";
+      const newConv = await res.json();
+      const newSession: ChatSession = {
+        id: newConv.id,
+        title: newConv.title,
+        messages: [],
+        model: selectedModelId,
+        createdAt: new Date(newConv.created_at).getTime()
+      };
+      setSessions(prev => [newSession, ...prev]);
+      setActiveSessionId(newConv.id);
+      return newConv.id;
+    } catch (e) {
+      console.error(e);
+      return "";
     }
-  };
-
-  const handleRenameSession = (id: string, newTitle: string) => {
-    setSessions((prev) =>
-      prev.map((s) => (s.id === id ? { ...s, title: newTitle } : s))
-    );
-  };
-
-  const handleClearAll = () => {
-    setSessions([]);
-    setActiveSessionId(null);
   };
 
   const handleSendMessage = async (content: string) => {
-    if (!content.trim() || isLoading) return;
+    if (!content.trim() || isLoading || !currentUser?.id) return;
 
-    // 1. Determine or create active session
-    let currentSessionId = activeSessionId;
-    let isBrandNewSession = false;
-    let existingMessages: Message[] = [];
-
-    if (!currentSessionId || !activeSession) {
-      currentSessionId = createNewSession();
-      isBrandNewSession = true;
-      existingMessages = [];
-    } else {
-      existingMessages = activeSession.messages;
+    let currentId = activeSessionId;
+    if (!currentId || sessions.length === 0) {
+      currentId = await createNewSession();
+      if (!currentId) return;
     }
 
-    const userMsg: Message = {
-      id: `msg_${Date.now()}_user`,
-      role: "user",
-      content,
-      timestamp: Date.now(),
-    };
+    const currentSession = sessions.find(s => s.id === currentId);
+    const prevMsgs = currentSession ? currentSession.messages : [];
 
-    const targetSessionMessages = [...existingMessages, userMsg];
+    const userMsg: Message = { id: `u_${Date.now()}`, role: "user", content, timestamp: Date.now() };
+    const nextMsgs = [...prevMsgs, userMsg];
 
-    // Optimistically update session messages in state
-    setSessions((prev) =>
-      prev.map((s) => {
-        if (s.id === currentSessionId) {
-          // If session was "Nouvelle Discussion", automatically rename it to a snippet of the first prompt
-          let newTitle = s.title;
-          if (s.title === "Nouvelle Discussion" || isBrandNewSession) {
-            newTitle = content.length > 30 ? `${content.substring(0, 30).trim()}...` : content;
-          }
-
-          return {
-            ...s,
-            title: newTitle,
-            messages: targetSessionMessages,
-          };
-        }
-        return s;
-      })
-    );
+    setSessions(prev => prev.map(s => {
+      if (s.id === currentId) {
+        const updatedTitle = s.title === "Nouvelle Discussion" ? (content.substring(0, 30) + "...") : s.title;
+        return { ...s, title: updatedTitle, messages: nextMsgs };
+      }
+      return s;
+    }));
 
     setIsLoading(true);
 
     try {
-      // 2. Call local full-stack endpoint with stream option
-      const response = await fetch("/api/chat", {
+      const res = await fetch("/api/chat", {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           model: selectedModelId,
-          messages: targetSessionMessages.map((m) => ({
-            role: m.role,
-            content: m.content,
-          })),
+          messages: nextMsgs.map(m => ({ role: m.role, content: m.content })),
           stream: true,
-        }),
+          conversationId: currentId,
+          userId: currentUser.id
+        })
       });
 
-      if (!response.ok) {
-        const errorData = await response.json().catch(() => ({}));
-        throw new Error(errorData.error || errorData.details || "Échec de la récupération de la réponse du serveur Mistral AI.");
-      }
+      if (!res.ok) throw new Error("Erreur de transmission");
 
-      // Check if standard web stream reader is available
-      const reader = response.body?.getReader();
-      if (!reader) {
-        throw new Error("Aucun flux de données reçu du serveur.");
-      }
+      const reader = res.body?.getReader();
+      if (!reader) throw new Error("Flux indisponible");
 
-      // Initialize empty assistant message in state
-      const assistantMsgId = `msg_${Date.now()}_assistant`;
-      const initialAssistantMsg: Message = {
-        id: assistantMsgId,
-        role: "assistant",
-        content: "",
-        timestamp: Date.now(),
-      };
-
-      setSessions((prev) =>
-        prev.map((s) => {
-          if (s.id === currentSessionId) {
-            return {
-              ...s,
-              messages: [...s.messages, initialAssistantMsg],
-            };
-          }
-          return s;
-        })
-      );
+      const assistantMsgId = `a_${Date.now()}`;
+      setSessions(prev => prev.map(s => s.id === currentId ? {
+        ...s,
+        messages: [...s.messages, { id: assistantMsgId, role: "assistant", content: "", timestamp: Date.now() }]
+      } : s));
 
       const decoder = new TextDecoder();
-      let assistantContent = "";
+      let assistantText = "";
       let buffer = "";
 
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
-
-        const chunk = decoder.decode(value, { stream: true });
-        buffer += chunk;
-
-        // Process SSE formatted chunks line by line
+        buffer += decoder.decode(value, { stream: true });
         const lines = buffer.split("\n");
-        // Keep the last partial line in buffer
         buffer = lines.pop() || "";
 
         for (const line of lines) {
-          const cleanLine = line.trim();
-          if (!cleanLine) continue;
-          if (cleanLine === "data: [DONE]") continue;
-
-          if (cleanLine.startsWith("data: ")) {
-            const jsonStr = cleanLine.substring(6);
+          const clean = line.trim();
+          if (clean.startsWith("data: ") && !clean.includes("[DONE]")) {
             try {
-              const parsed = JSON.parse(jsonStr);
-              const deltaContent = parsed.choices?.[0]?.delta?.content || "";
-              if (deltaContent) {
-                assistantContent += deltaContent;
-                // Update active assistant message content in real time
-                setSessions((prev) =>
-                  prev.map((s) => {
-                    if (s.id === currentSessionId) {
-                      return {
-                        ...s,
-                        messages: s.messages.map((m) =>
-                          m.id === assistantMsgId ? { ...m, content: assistantContent } : m
-                        ),
-                      };
-                    }
-                    return s;
-                  })
-                );
+              const parsed = JSON.parse(clean.substring(6));
+              const txt = parsed.choices?.[0]?.delta?.content || "";
+              if (txt) {
+                assistantText += txt;
+                setSessions(prev => prev.map(s => s.id === currentId ? {
+                  ...s,
+                  messages: s.messages.map(m => m.id === assistantMsgId ? { ...m, content: assistantText } : m)
+                } : s));
               }
-            } catch (e) {
-              // Ignore incomplete lines/parsing errors for temporary stream chunks
-            }
+            } catch (e) {}
           }
         }
       }
-
-      // Handle any remaining data in the buffer
-      if (buffer && buffer.startsWith("data: ")) {
-        const cleanLine = buffer.trim();
-        if (cleanLine !== "data: [DONE]" && cleanLine.startsWith("data: ")) {
-          const jsonStr = cleanLine.substring(6);
-          try {
-            const parsed = JSON.parse(jsonStr);
-            const deltaContent = parsed.choices?.[0]?.delta?.content || "";
-            if (deltaContent) {
-              assistantContent += deltaContent;
-              setSessions((prev) =>
-                prev.map((s) => {
-                  if (s.id === currentSessionId) {
-                    return {
-                      ...s,
-                      messages: s.messages.map((m) =>
-                        m.id === assistantMsgId ? { ...m, content: assistantContent } : m
-                      ),
-                    };
-                  }
-                  return s;
-                })
-              );
-            }
-          } catch (e) {
-            // Ignored
-          }
-        }
-      }
-
-    } catch (err: any) {
-      console.error("API Call failed:", err);
-      
-      const errorMsg: Message = {
-        id: `msg_${Date.now()}_error`,
-        role: "assistant",
-        content: `⚠️ **Erreur de Service:** ${err.message || "Une erreur inattendue est survenue lors de la communication avec le moteur Mistral AI."}\n\n*Veuillez vérifier que le serveur de développement est actif et que votre connexion réseau est opérationnelle.*`,
-        timestamp: Date.now(),
-      };
-
-      setSessions((prev) =>
-        prev.map((s) => {
-          if (s.id === currentSessionId) {
-            return {
-              ...s,
-              messages: [...s.messages, errorMsg],
-            };
-          }
-          return s;
-        })
-      );
+    } catch (err) {
+      console.error(err);
     } finally {
       setIsLoading(false);
     }
   };
 
-  const handleLogin = (user: User) => {
-    setCurrentUser(user);
-    localStorage.setItem("mistral_current_user", JSON.stringify(user));
-
-    // Load user-specific sessions and active session
-    const userKey = `mistral_chat_sessions_${user.email.toLowerCase()}`;
-    try {
-      const saved = localStorage.getItem(userKey);
-      const loadedSessions = saved ? JSON.parse(saved) : [];
-      setSessions(loadedSessions);
-
-      const activeKey = `mistral_active_session_id_${user.email.toLowerCase()}`;
-      const savedActiveId = localStorage.getItem(activeKey);
-      if (savedActiveId && loadedSessions.some((s: ChatSession) => s.id === savedActiveId)) {
-        setActiveSessionId(savedActiveId);
-      } else {
-        setActiveSessionId(loadedSessions.length > 0 ? loadedSessions[0].id : null);
-      }
-    } catch (e) {
-      console.error("Failed to load user-specific sessions upon login:", e);
-      setSessions([]);
-      setActiveSessionId(null);
-    }
-  };
-
-  const handleLogout = () => {
-    setCurrentUser(null);
-    localStorage.removeItem("mistral_current_user");
-    setSessions([]);
-    setActiveSessionId(null);
-  };
-
-  if (!currentUser) {
-    return <Login onLogin={handleLogin} />;
-  }
+  if (!currentUser) return <Login onLogin={(u) => { setCurrentUser(u); localStorage.setItem("mistral_current_user", JSON.stringify(u)); }} />;
 
   return (
-    <div className="flex h-screen w-screen overflow-hidden bg-gray-50 dark:bg-gray-950 font-sans">
-      
-      {/* Sidebar for Navigation and Settings */}
+    <div className="flex h-screen w-screen overflow-hidden bg-gray-50 dark:bg-gray-950 font-sans antialiased text-gray-900 dark:text-gray-100">
       <Sidebar
         sessions={sessions}
         activeSessionId={activeSessionId}
-        onSelectSession={handleSelectSession}
+        onSelectSession={setActiveSessionId}
         onNewSession={createNewSession}
-        onDeleteSession={handleDeleteSession}
-        onRenameSession={handleRenameSession}
-        onClearAll={handleClearAll}
+        onDeleteSession={(id) => setSessions(p => p.filter(s => s.id !== id))}
+        onRenameSession={(id, t) => setSessions(p => p.map(s => s.id === id ? { ...s, title: t } : s))}
+        onClearAll={() => { setSessions([]); setActiveSessionId(null); }}
         darkMode={darkMode}
         setDarkMode={setDarkMode}
         isOpen={sidebarOpen}
         setIsOpen={setSidebarOpen}
       />
-
-      {/* Primary Chat Activity Area */}
       <ChatWindow
-        session={activeSession}
+        session={sessions.find(s => s.id === activeSessionId) || null}
         onSendMessage={handleSendMessage}
         isLoading={isLoading}
         selectedModelId={selectedModelId}
         onChangeModel={setSelectedModelId}
         onToggleSidebar={() => setSidebarOpen(true)}
         currentUser={currentUser}
-        onLogout={handleLogout}
-        onUpdateUser={handleLogin}
+        onLogout={() => { setCurrentUser(null); localStorage.removeItem("mistral_current_user"); setSessions([]); setActiveSessionId(null); }}
+        onUpdateUser={setCurrentUser}
       />
     </div>
   );
